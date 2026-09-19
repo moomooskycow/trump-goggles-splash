@@ -1,0 +1,16 @@
+# Files that must never be uploaded as public assets.
+# The public surface is the released static site only: index.html,
+# favicon.ico, styles/, scripts/. The DigitalOcean origin serves the same
+# set from /opt/public-apps/trump-goggles/current.
+README.md
+CLAUDE.md
+Dockerfile
+server.js
+api/
+tools/
+.github/
+.gitignore
+.git/
+.wrangler/
+wrangler.jsonc
+.assetsignore

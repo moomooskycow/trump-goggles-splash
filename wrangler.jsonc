@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "trump-goggles-splash",
+  "account_id": "b069014f6a46558ea9146fb6c4ff8f6c",
+  "compatibility_date": "2026-09-19",
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./",
+    "not_found_handling": "none"
+  },
+  "env": {
+    "staging": {
+      "name": "trump-goggles-splash-staging",
+      "workers_dev": true
+    },
+    "production": {
+      "name": "trump-goggles-splash",
+      "workers_dev": false,
+      "routes": [
+        // Attaches trumpgoggles.mistystep.io as a Worker custom domain on
+        // deploy; Cloudflare manages the proxied DNS record (copy: cantrip/site,
+        // vibe-machine/site). The former DNS-only A on public-apps must not
+        // exist when this attaches; on error 100117 delete that record first.
+        { "pattern": "trumpgoggles.mistystep.io", "custom_domain": true }
+      ]
+    }
+  }
+}
