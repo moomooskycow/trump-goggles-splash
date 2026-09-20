@@ -22,7 +22,12 @@
         // deploy; Cloudflare manages the proxied DNS record (copy: cantrip/site,
         // vibe-machine/site). The former DNS-only A on public-apps must not
         // exist when this attaches; on error 100117 delete that record first.
-        { "pattern": "trumpgoggles.mistystep.io", "custom_domain": true }
+        { "pattern": "trumpgoggles.mistystep.io", "custom_domain": true },
+        // trumpgoggles.com + www.trumpgoggles.com are attached to the same
+        // worker; the trumpgoggles.com zone is pending activation (registrar
+        // NS flip pending, operator-gated).
+        { "pattern": "trumpgoggles.com", "custom_domain": true },
+        { "pattern": "www.trumpgoggles.com", "custom_domain": true }
       ]
     }
   }
