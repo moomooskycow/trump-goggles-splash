@@ -199,13 +199,14 @@ function lastForwardedAddress(value) {
 
 function clientKey(req) {
   return (
-    // cf-connecting-ip is set by the Cloudflare edge and cannot be spoofed
-    // by the client; prefer it so client-supplied x-forwarded-for cannot
-    // rotate the relay rate-limit bucket. The remaining headers are sidecar
-    // fallbacks (DigitalOcean App Platform and direct connections).
-    req.headers['cf-connecting-ip'] ||
+    // The Workers adapter supplies trustedClientIp from cf-connecting-ip,
+    // which is set by the Cloudflare edge and cannot be spoofed by clients.
+    // On the DigitalOcean sidecar the platform sets do-connecting-ip; keep
+    // it first so client-supplied headers cannot rotate rate-limit buckets.
+    req.trustedClientIp ||
     req.headers['do-connecting-ip'] ||
     lastForwardedAddress(req.headers['x-forwarded-for']) ||
+    req.headers['cf-connecting-ip'] ||
     req.headers['x-real-ip'] ||
     'unknown'
   );
@@ -387,3 +388,7 @@ module.exports = async function handler(req, res) {
 // The Workers entrypoint (src/worker.mjs) reuses this handler and its body
 // cap; export the constant so the two runtimes cannot drift.
 module.exports.MAX_BODY_BYTES = MAX_BODY_BYTES;
+
+// The Workers adapter checks relay trust before reading request bodies;
+// share the same predicate so the two runtimes cannot disagree.
+module.exports.trustedRelayOrigin = trustedRelayOrigin;

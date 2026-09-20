@@ -2,7 +2,8 @@
 # The public surface is the released static site only: index.html,
 # favicon.ico, styles/, scripts/. The DigitalOcean origin serves the same
 # set from /opt/public-apps/trump-goggles/current. src/ holds the Worker
-# entry; it must never be reachable as an asset.
+# entry; it must never be reachable as an asset. Local secret files
+# (.dev.vars*, .env*) must never deploy either.
 README.md
 CLAUDE.md
 Dockerfile
@@ -13,6 +14,9 @@ tools/
 .github/
 .gitignore
 .git/
+node_modules/
 .wrangler/
 wrangler.jsonc
 .assetsignore
+.dev.vars*
+.env*

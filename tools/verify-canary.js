@@ -161,8 +161,9 @@ async function verifyRelayRoute() {
     assert.equal(response.statusCode, attempt <= 30 ? 202 : 429);
   }
 
-  // cf-connecting-ip is authoritative at the Cloudflare edge: a client that
-  // rotates x-forwarded-for must not reset the relay rate-limit bucket.
+  // Client-supplied headers must not rotate the relay bucket: the sidecar
+  // anchors on the platform-set do-connecting-ip, and the Workers adapter
+  // supplies trustedClientIp from the edge-set cf-connecting-ip.
   for (let attempt = 1; attempt <= 31; attempt += 1) {
     response = makeResponse();
     await relay(
@@ -172,10 +173,31 @@ async function verifyRelayRoute() {
           host: 'trumpgoggles.mistystep.io',
           origin: 'https://trumpgoggles.mistystep.io',
           'content-length': '26',
-          'cf-connecting-ip': '203.0.113.7',
-          'x-forwarded-for': `203.0.113.${attempt}`,
+          'do-connecting-ip': '203.0.113.7',
+          'cf-connecting-ip': `198.51.100.${attempt}`,
+          'x-forwarded-for': `198.51.100.${attempt}`,
         },
         body: { message: 'spoof resistance' },
+      },
+      response
+    );
+    assert.equal(response.statusCode, attempt <= 30 ? 202 : 429);
+  }
+
+  for (let attempt = 1; attempt <= 31; attempt += 1) {
+    response = makeResponse();
+    await relay(
+      {
+        method: 'POST',
+        headers: {
+          host: 'trumpgoggles.mistystep.io',
+          origin: 'https://trumpgoggles.mistystep.io',
+          'content-length': '26',
+          'cf-connecting-ip': `198.51.100.${attempt}`,
+          'x-forwarded-for': `198.51.100.${attempt}`,
+        },
+        trustedClientIp: '203.0.113.8',
+        body: { message: 'adapter trusted ip' },
       },
       response
     );

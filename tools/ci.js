@@ -129,8 +129,12 @@ function assertWorkerSourceIsNotAnAsset() {
   const ignored = readText('.assetsignore')
     .split(/\r?\n/)
     .map((line) => line.trim());
-  if (!ignored.includes('src/')) {
-    throw new Error('.assetsignore must exclude src/ from the asset upload');
+  for (const required of ['src/', '.dev.vars*', '.env*']) {
+    if (!ignored.includes(required)) {
+      throw new Error(
+        `.assetsignore must exclude ${required} from the asset upload`
+      );
+    }
   }
 }
 

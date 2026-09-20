@@ -106,6 +106,24 @@ async function main() {
   assert.equal(response.status, 403, 'untrusted origins must be rejected');
   assert.equal(calls.length, 0, 'untrusted origins must not forward');
 
+  response = await worker.fetch(
+    makeRequest('/api/canary/api/v1/errors', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Origin: 'https://evil.example',
+        Referer: 'https://evil.example/',
+      },
+      body: JSON.stringify({ message: 'a'.repeat(40000) }),
+    })
+  );
+  assert.equal(
+    response.status,
+    403,
+    'trust is checked before size, matching the sidecar order'
+  );
+  assert.equal(calls.length, 0, 'untrusted oversized payloads must not forward');
+
   calls = captureForward();
   response = await worker.fetch(
     relayRequest({
@@ -183,6 +201,56 @@ async function main() {
 
   response = await worker.fetch(relayRequest({ payload: { message: 'a'.repeat(40000) } }));
   assert.equal(response.status, 413, 'oversized payloads must be rejected');
+
+  // The cap counts UTF-8 bytes (HTTP semantics): a multibyte stream without a
+  // content-length header must still be rejected even though its decoded
+  // length is under the cap.
+  const encoder = new TextEncoder();
+  const multibyte = JSON.stringify({ message: 'é'.repeat(20000) }); // >32768 bytes, <32768 code units
+  assert.ok(encoder.encode(multibyte).byteLength > relay.MAX_BODY_BYTES);
+  assert.ok(multibyte.length < relay.MAX_BODY_BYTES);
+  response = await worker.fetch(
+    new Request(`${SITE}/api/canary/api/v1/errors`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: SITE },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(multibyte));
+          controller.close();
+        },
+      }),
+      duplex: 'half',
+    })
+  );
+  assert.equal(response.status, 413, 'byte-length cap must reject multibyte payloads');
+
+  // The reader must stop and cancel as soon as the cap is crossed instead of
+  // buffering the whole stream.
+  let pulled = 0;
+  let cancelled = false;
+  response = await worker.fetch(
+    new Request(`${SITE}/api/canary/api/v1/errors`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: SITE },
+      body: new ReadableStream({
+        pull(controller) {
+          pulled += 1;
+          if (pulled > 1000) {
+            controller.close();
+            return;
+          }
+          controller.enqueue(new Uint8Array(4096));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+      duplex: 'half',
+    })
+  );
+  assert.equal(response.status, 413, 'streamed oversize must be rejected');
+  assert.ok(pulled <= 12, `reader must stop early (pulled ${pulled} chunks)`);
+  assert.equal(cancelled, true, 'stream must be cancelled after the cap is crossed');
 
   response = await worker.fetch(
     makeRequest('/api/canary/api/v1/errors', {

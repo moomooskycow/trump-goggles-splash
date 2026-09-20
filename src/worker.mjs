@@ -1,4 +1,4 @@
-/* global console, Headers, Request, Response, URL */
+/* global console, Headers, Request, Response, TextDecoder, URL */
 
 import health from '../api/health.js';
 import relay from '../api/canary/api/v1/errors.js';
@@ -23,6 +23,11 @@ import relay from '../api/canary/api/v1/errors.js';
  * The api/ handlers read configuration from process.env (nodejs_compat),
  * with the same names as the sidecar: CANARY_API_KEY, CANARY_ENDPOINT,
  * CANARY_SERVICE_NAME, CANARY_ENVIRONMENT, NEXT_PUBLIC_SITE_URL.
+ *
+ * Relay requests are checked for trust before the body is read, and the
+ * body is read with a hard byte cap that stops (and cancels) the stream the
+ * moment the cap is crossed, so untrusted or oversized payloads are never
+ * fully buffered.
  */
 
 const MAX_BODY_BYTES = relay.MAX_BODY_BYTES;
@@ -47,7 +52,39 @@ function nodeRequest(request, body) {
     url: `${url.pathname}${url.search}`,
     headers,
     body,
+    // cf-connecting-ip is set by the Cloudflare edge, not the client; the
+    // relay prefers it for rate-limit keys.
+    trustedClientIp: headers['cf-connecting-ip'],
   };
+}
+
+/**
+ * Reads at most maxBytes of the request body. The read stops as soon as the
+ * cap is crossed and cancels the stream, so the full body is never buffered
+ * when it exceeds the contract limit.
+ */
+async function readBodyBounded(request, maxBytes) {
+  if (!request.body) return { text: '', tooLarge: false };
+  const reader = request.body.getReader();
+  const chunks = [];
+  let bytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > maxBytes) {
+      await reader.cancel().catch(() => {});
+      return { text: '', tooLarge: true };
+    }
+    chunks.push(value);
+  }
+  const merged = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { text: new TextDecoder().decode(merged), tooLarge: false };
 }
 
 /** Adapts the api/ handlers' setHeader/status/json contract onto Response. */
@@ -104,19 +141,19 @@ async function handle(request) {
   }
 
   if (pathname === '/api/canary/api/v1/errors') {
-    let body;
-    if (request.method === 'POST') {
-      const declared = Number(request.headers.get('content-length') || 0);
-      if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    const nodeish = nodeRequest(request);
+    if (request.method === 'POST' && relay.trustedRelayOrigin(nodeish)) {
+      // Trusted: enforce the byte cap while reading. The handler re-checks
+      // trust and the declared content-length itself, so the visible order
+      // stays trust -> size -> rate -> parse, matching the sidecar.
+      const read = await readBodyBounded(request, MAX_BODY_BYTES);
+      if (read.tooLarge) {
         return jsonResponse({ error: 'Canary event payload too large' }, 413);
       }
-      body = await request.text();
-      if (body.length > MAX_BODY_BYTES) {
-        return jsonResponse({ error: 'Canary event payload too large' }, 413);
-      }
+      nodeish.body = read.text;
     }
     const response = new NodeResponse();
-    await relay(nodeRequest(request, body), response);
+    await relay(nodeish, response);
     return response.toResponse();
   }
 
