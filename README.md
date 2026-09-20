@@ -24,8 +24,14 @@ npx serve .
 # Verify Canary health and relay behavior
 node tools/verify-canary.js
 
+# Verify Worker routing locally
+node tools/verify-worker.mjs
+
 # Run the full local CI gate
 node tools/ci.js
+
+# Run the Worker locally (assets + api routes)
+wrangler dev --env staging
 
 # After production deploy, verify Canary ingest and readback
 CANARY_READ_API_KEY=... node tools/smoke-canary-production.js
@@ -43,9 +49,12 @@ CANARY_READ_API_KEY=... node tools/smoke-canary-production.js
 ├── api/
 │   ├── health.js
 │   └── canary/api/v1/errors.js
+├── src/
+│   └── worker.mjs  # Cloudflare Worker entry
 ├── tools/
 │   ├── ci.js
 │   ├── verify-canary.js
+│   ├── verify-worker.mjs
 │   └── smoke-canary-production.js
 ├── favicon.ico
 └── README.md
@@ -53,11 +62,17 @@ CANARY_READ_API_KEY=... node tools/smoke-canary-production.js
 
 ## Observability
 
-Production deploys to DigitalOcean as a static site plus the dependency-free
-Node sidecar in `server.js`. The handlers in `api/` are provider-neutral and
-the retired provider has no deployment manifest in this repository.
+Production serves from the Cloudflare Worker `trump-goggles-splash`
+(`wrangler deploy --env production`). Static assets come from the assets
+layer; `src/worker.mjs` serves the same two routes as the dependency-free
+Node sidecar in `server.js`, so the contract holds on both runtimes:
 
-DigitalOcean should define:
+- `GET|HEAD /api/health`
+- `POST /api/canary/api/v1/errors`
+
+The handlers in `api/` are provider-neutral and shared by both runtimes.
+
+Both runtimes read the same environment names:
 
 - `CANARY_API_KEY` - service-bound ingest key for `trump-goggles-splash`
 - `CANARY_ENDPOINT` - defaults to `https://canary.mistystep.io`

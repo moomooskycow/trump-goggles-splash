@@ -9,3 +9,7 @@
 # Logs
 *.log
 .vercel
+
+# Wrangler
+.wrangler/
+.dev.vars*
