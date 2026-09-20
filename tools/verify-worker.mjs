@@ -124,6 +124,29 @@ async function main() {
   );
   assert.equal(calls.length, 0, 'untrusted oversized payloads must not forward');
 
+  // Untrusted requests must not have their body read at all: a pull-counted
+  // stream must record zero pulls.
+  let untrustedPulls = 0;
+  response = await worker.fetch(
+    new Request(`${SITE}/api/canary/api/v1/errors`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' },
+      body: new ReadableStream(
+        {
+          pull(controller) {
+            untrustedPulls += 1;
+            controller.enqueue(new Uint8Array(4096));
+          },
+        },
+        { highWaterMark: 0 }
+      ),
+      duplex: 'half',
+    })
+  );
+  assert.equal(response.status, 403);
+  assert.equal(untrustedPulls, 0, 'untrusted bodies must not be read');
+  assert.equal(calls.length, 0, 'untrusted streamed payloads must not forward');
+
   calls = captureForward();
   response = await worker.fetch(
     relayRequest({

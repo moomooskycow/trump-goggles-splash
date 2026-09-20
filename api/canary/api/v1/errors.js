@@ -262,9 +262,13 @@ function readBody(req) {
 
   return new Promise((resolve, reject) => {
     let body = '';
+    let bytes = 0;
     req.on('data', (chunk) => {
       body += chunk;
-      if (body.length > MAX_BODY_BYTES) {
+      // Cap on UTF-8 bytes (same unit as the content-length header and the
+      // Workers reader) so both runtimes enforce the same limit.
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > MAX_BODY_BYTES) {
         reject(new Error('payload_too_large'));
         req.destroy();
       }

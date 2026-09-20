@@ -204,6 +204,33 @@ async function verifyRelayRoute() {
     assert.equal(response.statusCode, attempt <= 30 ? 202 : 429);
   }
 
+  // The streamed read path caps on UTF-8 bytes as well: a multibyte payload
+  // whose byte size exceeds the cap is rejected even when its code-unit
+  // length is under it.
+  const multibyteChunk = Buffer.from(
+    JSON.stringify({ message: 'é'.repeat(20000) })
+  );
+  assert.equal(multibyteChunk.byteLength > relay.MAX_BODY_BYTES, true);
+  assert.equal(multibyteChunk.toString('utf8').length < relay.MAX_BODY_BYTES, true);
+  response = makeResponse();
+  await relay(
+    {
+      method: 'POST',
+      headers: {
+        host: 'www.trumpgoggles.com',
+        origin: 'https://www.trumpgoggles.com',
+      },
+      on(event, callback) {
+        if (event === 'data') setImmediate(() => callback(multibyteChunk));
+        if (event === 'end') setImmediate(() => callback());
+        return this;
+      },
+      destroy() {},
+    },
+    response
+  );
+  assert.equal(response.statusCode, 413);
+
   response = makeResponse();
   await relay(
     {
