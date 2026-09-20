@@ -161,6 +161,76 @@ async function verifyRelayRoute() {
     assert.equal(response.statusCode, attempt <= 30 ? 202 : 429);
   }
 
+  // Client-supplied headers must not rotate the relay bucket: the sidecar
+  // anchors on the platform-set do-connecting-ip, and the Workers adapter
+  // supplies trustedClientIp from the edge-set cf-connecting-ip.
+  for (let attempt = 1; attempt <= 31; attempt += 1) {
+    response = makeResponse();
+    await relay(
+      {
+        method: 'POST',
+        headers: {
+          host: 'trumpgoggles.mistystep.io',
+          origin: 'https://trumpgoggles.mistystep.io',
+          'content-length': '26',
+          'do-connecting-ip': '203.0.113.7',
+          'cf-connecting-ip': `198.51.100.${attempt}`,
+          'x-forwarded-for': `198.51.100.${attempt}`,
+        },
+        body: { message: 'spoof resistance' },
+      },
+      response
+    );
+    assert.equal(response.statusCode, attempt <= 30 ? 202 : 429);
+  }
+
+  for (let attempt = 1; attempt <= 31; attempt += 1) {
+    response = makeResponse();
+    await relay(
+      {
+        method: 'POST',
+        headers: {
+          host: 'trumpgoggles.mistystep.io',
+          origin: 'https://trumpgoggles.mistystep.io',
+          'content-length': '26',
+          'cf-connecting-ip': `198.51.100.${attempt}`,
+          'x-forwarded-for': `198.51.100.${attempt}`,
+        },
+        trustedClientIp: '203.0.113.8',
+        body: { message: 'adapter trusted ip' },
+      },
+      response
+    );
+    assert.equal(response.statusCode, attempt <= 30 ? 202 : 429);
+  }
+
+  // The streamed read path caps on UTF-8 bytes as well: a multibyte payload
+  // whose byte size exceeds the cap is rejected even when its code-unit
+  // length is under it.
+  const multibyteChunk = Buffer.from(
+    JSON.stringify({ message: 'é'.repeat(20000) })
+  );
+  assert.equal(multibyteChunk.byteLength > relay.MAX_BODY_BYTES, true);
+  assert.equal(multibyteChunk.toString('utf8').length < relay.MAX_BODY_BYTES, true);
+  response = makeResponse();
+  await relay(
+    {
+      method: 'POST',
+      headers: {
+        host: 'www.trumpgoggles.com',
+        origin: 'https://www.trumpgoggles.com',
+      },
+      on(event, callback) {
+        if (event === 'data') setImmediate(() => callback(multibyteChunk));
+        if (event === 'end') setImmediate(() => callback());
+        return this;
+      },
+      destroy() {},
+    },
+    response
+  );
+  assert.equal(response.statusCode, 413);
+
   response = makeResponse();
   await relay(
     {

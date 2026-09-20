@@ -1,7 +1,11 @@
 const DEFAULT_SERVICE = 'trump-goggles-splash';
 const DEFAULT_ENDPOINT = 'https://canary.mistystep.io';
 const DEFAULT_SITE_URL = 'https://www.trumpgoggles.com';
-const DEFAULT_SITE_ALIASES = ['https://trumpgoggles.com'];
+const DEFAULT_SITE_ALIASES = [
+  'https://trumpgoggles.com',
+  // Current Worker custom domain; it serves the same handlers on Cloudflare.
+  'https://trumpgoggles.mistystep.io',
+];
 const MAX_BODY_BYTES = 32768;
 const LOCAL_RELAY_LIMIT = 30;
 const LOCAL_RELAY_WINDOW_MS = 60000;
@@ -195,6 +199,11 @@ function lastForwardedAddress(value) {
 
 function clientKey(req) {
   return (
+    // The Workers adapter supplies trustedClientIp from cf-connecting-ip,
+    // which is set by the Cloudflare edge and cannot be spoofed by clients.
+    // On the DigitalOcean sidecar the platform sets do-connecting-ip; keep
+    // it first so client-supplied headers cannot rotate rate-limit buckets.
+    req.trustedClientIp ||
     req.headers['do-connecting-ip'] ||
     lastForwardedAddress(req.headers['x-forwarded-for']) ||
     req.headers['cf-connecting-ip'] ||
@@ -253,9 +262,13 @@ function readBody(req) {
 
   return new Promise((resolve, reject) => {
     let body = '';
+    let bytes = 0;
     req.on('data', (chunk) => {
       body += chunk;
-      if (body.length > MAX_BODY_BYTES) {
+      // Cap on UTF-8 bytes (same unit as the content-length header and the
+      // Workers reader) so both runtimes enforce the same limit.
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > MAX_BODY_BYTES) {
         reject(new Error('payload_too_large'));
         req.destroy();
       }
@@ -375,3 +388,11 @@ module.exports = async function handler(req, res) {
 
   res.status(202).json({ status: 'accepted' });
 };
+
+// The Workers entrypoint (src/worker.mjs) reuses this handler and its body
+// cap; export the constant so the two runtimes cannot drift.
+module.exports.MAX_BODY_BYTES = MAX_BODY_BYTES;
+
+// The Workers adapter checks relay trust before reading request bodies;
+// share the same predicate so the two runtimes cannot disagree.
+module.exports.trustedRelayOrigin = trustedRelayOrigin;

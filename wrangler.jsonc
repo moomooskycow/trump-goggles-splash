@@ -3,26 +3,46 @@
   "name": "trump-goggles-splash",
   "account_id": "b069014f6a46558ea9146fb6c4ff8f6c",
   "compatibility_date": "2026-09-19",
+  "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
+  "main": "src/worker.mjs",
   "assets": {
     "directory": "./",
-    "not_found_handling": "none"
+    "not_found_handling": "none",
+    // The two api/ routes are worker-owned; every other request keeps
+    // asset-first routing. Non-asset paths still fall through to the worker,
+    // which 404s them exactly like the assets-only deployment did.
+    "run_worker_first": ["/api/*"]
   },
   "env": {
     "staging": {
       "name": "trump-goggles-splash-staging",
-      "workers_dev": true
+      "workers_dev": true,
+      "vars": {
+        "NODE_ENV": "production",
+        "CANARY_ENVIRONMENT": "staging",
+        "NEXT_PUBLIC_SITE_URL": "https://trump-goggles-splash-staging.misty-step.workers.dev"
+      }
     },
     "production": {
       "name": "trump-goggles-splash",
       "workers_dev": false,
+      "vars": {
+        "NODE_ENV": "production",
+        "CANARY_ENVIRONMENT": "production"
+      },
       "routes": [
         // Attaches trumpgoggles.mistystep.io as a Worker custom domain on
         // deploy; Cloudflare manages the proxied DNS record (copy: cantrip/site,
         // vibe-machine/site). The former DNS-only A on public-apps must not
         // exist when this attaches; on error 100117 delete that record first.
-        { "pattern": "trumpgoggles.mistystep.io", "custom_domain": true }
+        { "pattern": "trumpgoggles.mistystep.io", "custom_domain": true },
+        // trumpgoggles.com + www.trumpgoggles.com are attached to the same
+        // worker; the trumpgoggles.com zone is pending activation (registrar
+        // NS flip pending, operator-gated).
+        { "pattern": "trumpgoggles.com", "custom_domain": true },
+        { "pattern": "www.trumpgoggles.com", "custom_domain": true }
       ]
     }
   }

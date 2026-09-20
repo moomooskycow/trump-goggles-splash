@@ -24,8 +24,14 @@ npx serve .
 # Verify Canary health and relay behavior
 node tools/verify-canary.js
 
+# Verify Worker routing locally
+node tools/verify-worker.mjs
+
 # Run the full local CI gate
 node tools/ci.js
+
+# Run the Worker locally (assets + api routes; needs wrangler 4.135+)
+wrangler dev --env staging
 
 # After production deploy, verify Canary ingest and readback
 CANARY_READ_API_KEY=... node tools/smoke-canary-production.js
@@ -43,9 +49,12 @@ CANARY_READ_API_KEY=... node tools/smoke-canary-production.js
 ├── api/
 │   ├── health.js
 │   └── canary/api/v1/errors.js
+├── src/
+│   └── worker.mjs  # Cloudflare Worker entry
 ├── tools/
 │   ├── ci.js
 │   ├── verify-canary.js
+│   ├── verify-worker.mjs
 │   └── smoke-canary-production.js
 ├── favicon.ico
 └── README.md
@@ -53,20 +62,35 @@ CANARY_READ_API_KEY=... node tools/smoke-canary-production.js
 
 ## Observability
 
-Production deploys to DigitalOcean as a static site plus the dependency-free
-Node sidecar in `server.js`. The handlers in `api/` are provider-neutral and
-the retired provider has no deployment manifest in this repository.
+The Cloudflare Worker `trump-goggles-splash` is attached and ready
+(`wrangler deploy --env production`); `trumpgoggles.mistystep.io` already
+serves from it. `trumpgoggles.com` and `www.trumpgoggles.com` attach at the
+registrar nameserver flip; until that flip completes, `www.trumpgoggles.com`
+still reaches the DigitalOcean Caddy origin. Static assets come from the
+assets layer; `src/worker.mjs` serves the same two routes as the
+dependency-free Node sidecar in `server.js`, so the contract holds on both
+runtimes:
 
-DigitalOcean should define:
+- `GET|HEAD /api/health`
+- `POST /api/canary/api/v1/errors`
+
+The handlers in `api/` are provider-neutral and shared by both runtimes.
+
+Both runtimes read the same environment names:
 
 - `CANARY_API_KEY` - service-bound ingest key for `trump-goggles-splash`
 - `CANARY_ENDPOINT` - defaults to `https://canary.mistystep.io`
 - `CANARY_SERVICE_NAME` - defaults to `trump-goggles-splash`
+- `CANARY_ENVIRONMENT` - `staging` or `production` (set via wrangler.jsonc)
 - `NEXT_PUBLIC_SITE_URL` - canonical origin, `https://www.trumpgoggles.com`
 
 `/api/health` is a liveness/config check and returns `503` in production if
 Canary is not configured. Use `tools/smoke-canary-production.js` after deploy
 to prove end-to-end Canary ingest.
+
+Note: the Canary service is currently retired (no public endpoint as of
+2026-09-20); until it is revived or replaced, `/api/health` reports `503` in
+production and the smoke test cannot complete.
 
 ## Links
 

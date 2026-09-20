@@ -15,9 +15,11 @@ const REQUIRED_FILES = [
   'api/health.js',
   'api/canary/api/v1/errors.js',
   'server.js',
+  'src/worker.mjs',
   'Dockerfile',
   'tools/verify-canary.js',
   'tools/verify-server.js',
+  'tools/verify-worker.mjs',
   'tools/smoke-canary-production.js',
   'favicon.ico',
 ];
@@ -55,7 +57,7 @@ function listJavaScriptFiles(dir = ROOT) {
         if (entry.name === '.git' || entry.name === 'node_modules') return [];
         return listJavaScriptFiles(absolutePath);
       }
-      if (!entry.isFile() || !entry.name.endsWith('.js')) return [];
+      if (!entry.isFile() || !(entry.name.endsWith('.js') || entry.name.endsWith('.mjs'))) return [];
       return [path.relative(ROOT, absolutePath).split(path.sep).join(path.posix.sep)];
     })
     .sort();
@@ -119,6 +121,19 @@ function assertProviderRetirement() {
     const source = readText(relativePath);
     if (/\bVercel\b|VERCEL_|x-vercel-/i.test(source)) {
       throw new Error(`retired provider marker remains: ${relativePath}`);
+    }
+  }
+}
+
+function assertWorkerSourceIsNotAnAsset() {
+  const ignored = readText('.assetsignore')
+    .split(/\r?\n/)
+    .map((line) => line.trim());
+  for (const required of ['src/', '.dev.vars*', '.env*', 'node_modules/']) {
+    if (!ignored.includes(required)) {
+      throw new Error(
+        `.assetsignore must exclude ${required} from the asset upload`
+      );
     }
   }
 }
@@ -202,6 +217,10 @@ function main() {
   step('DigitalOcean server adapter preserves behavior', () =>
     runNodeScript('tools/verify-server.js')
   );
+  step('Worker entrypoint preserves behavior', () =>
+    runNodeScript('tools/verify-worker.mjs')
+  );
+  step('worker sources stay out of the asset store', assertWorkerSourceIsNotAnAsset);
   console.log('trump-goggles-splash CI gate passed');
 }
 
