@@ -10,7 +10,7 @@
   "assets": {
     "directory": "./",
     "not_found_handling": "none",
-    // The two api/ routes are worker-owned; every other request keeps
+    // The /api/* routes are worker-owned; every other request keeps
     // asset-first routing. Non-asset paths still fall through to the worker,
     // which 404s them exactly like the assets-only deployment did.
     "run_worker_first": ["/api/*"]
@@ -21,16 +21,17 @@
       "workers_dev": true,
       "vars": {
         "NODE_ENV": "production",
-        "CANARY_ENVIRONMENT": "staging",
+        "SENTRY_ENVIRONMENT": "staging",
         "NEXT_PUBLIC_SITE_URL": "https://trump-goggles-splash-staging.misty-step.workers.dev"
       }
     },
     "production": {
       "name": "trump-goggles-splash",
       "workers_dev": false,
+      // Browser monitoring stays off until a deploy provides SENTRY_DSN
+      // (public DSN). SENTRY_RELEASE is optional. No DSN is committed here.
       "vars": {
-        "NODE_ENV": "production",
-        "CANARY_ENVIRONMENT": "production"
+        "NODE_ENV": "production"
       },
       "routes": [
         // Attaches trumpgoggles.mistystep.io as a Worker custom domain on

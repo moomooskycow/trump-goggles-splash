@@ -1,7 +1,8 @@
-/* global console, Headers, Request, Response, TextDecoder, URL */
+/* global console, Headers, Request, Response, URL */
 
 import health from '../api/health.js';
-import relay from '../api/canary/api/v1/errors.js';
+import sentryConfig from '../api/sentry-config.js';
+import canaryTombstone from '../api/canary/api/v1/errors.js';
 
 /**
  * Cloudflare Worker entry for the Trump Goggles splash.
@@ -12,8 +13,10 @@ import relay from '../api/canary/api/v1/errors.js';
  * and www.trumpgoggles.com after the registrar flip) serves the same
  * routes:
  *
- *   - GET|HEAD /api/health            -> api/health.js
- *   - POST /api/canary/api/v1/errors  -> api/canary/api/v1/errors.js
+ *   - GET|HEAD /api/health                -> api/health.js
+ *   - GET|HEAD /api/sentry-config         -> api/sentry-config.js
+ *   - any      /api/canary/api/v1/errors  -> api/canary/api/v1/errors.js
+ *                                            (410 tombstone; no body read)
  *
  * Static assets keep being served by the assets layer; only /api/*
  * requests and non-asset paths reach this script (see `assets` in
@@ -21,16 +24,9 @@ import relay from '../api/canary/api/v1/errors.js';
  * deployment did. `src/` is kept out of the asset store by .assetsignore.
  *
  * The api/ handlers read configuration from process.env (nodejs_compat),
- * with the same names as the sidecar: CANARY_API_KEY, CANARY_ENDPOINT,
- * CANARY_SERVICE_NAME, CANARY_ENVIRONMENT, NEXT_PUBLIC_SITE_URL.
- *
- * Relay requests are checked for trust before the body is read, and the
- * body is read with a hard byte cap that stops (and cancels) the stream the
- * moment the cap is crossed, so untrusted or oversized payloads are never
- * fully buffered.
+ * with the same names as the sidecar: SENTRY_DSN, SENTRY_ENVIRONMENT,
+ * SENTRY_RELEASE, NODE_ENV.
  */
-
-const MAX_BODY_BYTES = relay.MAX_BODY_BYTES;
 
 function jsonResponse(payload, status) {
   return new Response(JSON.stringify(payload), {
@@ -40,7 +36,7 @@ function jsonResponse(payload, status) {
 }
 
 /** Adapts a Fetch API request to the req shape the api/ handlers expect. */
-function nodeRequest(request, body) {
+function nodeRequest(request) {
   const url = new URL(request.url);
   const headers = {};
   for (const [name, value] of request.headers) {
@@ -51,40 +47,8 @@ function nodeRequest(request, body) {
     method: request.method,
     url: `${url.pathname}${url.search}`,
     headers,
-    body,
-    // cf-connecting-ip is set by the Cloudflare edge, not the client; the
-    // relay prefers it for rate-limit keys.
-    trustedClientIp: headers['cf-connecting-ip'],
+    body: undefined,
   };
-}
-
-/**
- * Reads at most maxBytes of the request body. The read stops as soon as the
- * cap is crossed and cancels the stream, so the full body is never buffered
- * when it exceeds the contract limit.
- */
-async function readBodyBounded(request, maxBytes) {
-  if (!request.body) return { text: '', tooLarge: false };
-  const reader = request.body.getReader();
-  const chunks = [];
-  let bytes = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    bytes += value.byteLength;
-    if (bytes > maxBytes) {
-      await reader.cancel().catch(() => {});
-      return { text: '', tooLarge: true };
-    }
-    chunks.push(value);
-  }
-  const merged = new Uint8Array(bytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return { text: new TextDecoder().decode(merged), tooLarge: false };
 }
 
 /** Adapts the api/ handlers' setHeader/status/json contract onto Response. */
@@ -140,20 +104,16 @@ async function handle(request) {
     return response.toResponse();
   }
 
-  if (pathname === '/api/canary/api/v1/errors') {
-    const nodeish = nodeRequest(request);
-    if (request.method === 'POST' && relay.trustedRelayOrigin(nodeish)) {
-      // Trusted: enforce the byte cap while reading. The handler re-checks
-      // trust and the declared content-length itself, so the visible order
-      // stays trust -> size -> rate -> parse, matching the sidecar.
-      const read = await readBodyBounded(request, MAX_BODY_BYTES);
-      if (read.tooLarge) {
-        return jsonResponse({ error: 'Canary event payload too large' }, 413);
-      }
-      nodeish.body = read.text;
-    }
+  if (pathname === '/api/sentry-config') {
     const response = new NodeResponse();
-    await relay(nodeish, response);
+    await sentryConfig(nodeRequest(request), response);
+    return response.toResponse();
+  }
+
+  if (pathname === '/api/canary/api/v1/errors') {
+    // Tombstone: answered without reading or forwarding the request body.
+    const response = new NodeResponse();
+    await canaryTombstone(nodeRequest(request), response);
     return response.toResponse();
   }
 

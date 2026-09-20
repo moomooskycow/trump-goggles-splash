@@ -59,35 +59,19 @@ async function stopApp(child) {
   await new Promise((resolve) => child.once('exit', resolve));
 }
 
-async function main() {
-  let received;
-  const canary = http.createServer((request, response) => {
-    let body = '';
-    request.on('data', (chunk) => {
-      body += chunk;
-    });
-    request.on('end', () => {
-      received = {
-        authorization: request.headers.authorization,
-        body: JSON.parse(body),
-      };
-      response.writeHead(202, { 'Content-Type': 'application/json' });
-      response.end('{}');
-    });
-  });
-  const canaryPort = await listen(canary);
-
+async function verifyRetiredAndDisabled() {
   const { child, port } = await startApp({
-    CANARY_API_KEY: 'integration-test-key',
-    CANARY_ENDPOINT: `http://127.0.0.1:${canaryPort}`,
-    CANARY_SERVICE_NAME: 'trump-goggles-splash',
     NODE_ENV: 'production',
+    SENTRY_DSN: '',
   });
 
   try {
     const health = await fetch(`http://127.0.0.1:${port}/api/health`);
-    assert.equal(health.status, 200);
-    assert.equal((await health.json()).dependencies.canary, 'configured');
+    assert.equal(health.status, 200, 'liveness must not fail closed');
+    const healthBody = await health.json();
+    assert.equal(healthBody.status, 'ok');
+    assert.equal(healthBody.checks.liveness, 'ok');
+    assert.equal(healthBody.observability.canary.status, 'retired');
 
     const healthHead = await fetch(`http://127.0.0.1:${port}/api/health`, {
       method: 'HEAD',
@@ -100,52 +84,71 @@ async function main() {
     });
     assert.equal(healthPost.status, 405);
 
-    const relayGet = await fetch(
+    const config = await fetch(`http://127.0.0.1:${port}/api/sentry-config`);
+    assert.equal(config.status, 200);
+    const configBody = await config.json();
+    assert.equal(configBody.enabled, false);
+    assert.equal('dsn' in configBody, false, 'no placeholder DSN may exist');
+
+    const tombstone = await fetch(
       `http://127.0.0.1:${port}/api/canary/api/v1/errors`
     );
-    assert.equal(relayGet.status, 405);
+    assert.equal(tombstone.status, 410);
+    assert.equal(tombstone.headers.get('cache-control'), 'no-store');
+    assert.equal(tombstone.headers.get('access-control-allow-origin'), null);
+    assert.deepEqual(await tombstone.json(), { status: 'retired', service: 'canary' });
 
-    const rejected = await fetch(
+    const tombstonePost = await fetch(
       `http://127.0.0.1:${port}/api/canary/api/v1/errors`,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Origin: 'https://evil.example',
-        },
-        body: JSON.stringify({ message: 'reject me' }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'nobody reads this' }),
       }
     );
-    assert.equal(rejected.status, 403);
+    assert.equal(tombstonePost.status, 410);
 
-    const accepted = await fetch(
+    const tombstoneHead = await fetch(
       `http://127.0.0.1:${port}/api/canary/api/v1/errors`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Origin: `http://127.0.0.1:${port}`,
-          Referer: `http://127.0.0.1:${port}/?token=secret`,
-        },
-        body: JSON.stringify({
-          error_class: 'AdapterTest',
-          message: 'user test@example.com failed with token=secret',
-        }),
-      }
+      { method: 'HEAD' }
     );
-    assert.equal(accepted.status, 202);
-    assert.equal(received.authorization, 'Bearer integration-test-key');
-    assert.equal(received.body.service, 'trump-goggles-splash');
-    assert.equal(received.body.message.includes('test@example.com'), false);
-    assert.equal(received.body.message.includes('token=secret'), false);
+    assert.equal(tombstoneHead.status, 410);
+    assert.equal(await tombstoneHead.text(), '');
 
     const missing = await fetch(`http://127.0.0.1:${port}/missing`);
     assert.equal(missing.status, 404);
   } finally {
     await stopApp(child);
-    await close(canary);
   }
+}
 
+async function verifyInjectableConfig() {
+  const { child, port } = await startApp({
+    NODE_ENV: 'production',
+    SENTRY_DSN: 'https://public@example.invalid/1',
+    SENTRY_ENVIRONMENT: 'staging',
+    SENTRY_RELEASE: 'test-release-sha',
+  });
+
+  try {
+    const config = await fetch(`http://127.0.0.1:${port}/api/sentry-config`);
+    assert.equal(config.status, 200);
+    const body = await config.json();
+    assert.equal(body.enabled, true);
+    assert.equal(body.dsn, 'https://public@example.invalid/1');
+    assert.equal(body.environment, 'staging');
+    assert.equal(body.release, 'test-release-sha');
+
+    const health = await fetch(`http://127.0.0.1:${port}/api/health`);
+    assert.equal(health.status, 200, 'telemetry config must not gate liveness');
+  } finally {
+    await stopApp(child);
+  }
+}
+
+async function main() {
+  await verifyRetiredAndDisabled();
+  await verifyInjectableConfig();
   console.log('trump-goggles DigitalOcean server adapter verification passed');
 }
 

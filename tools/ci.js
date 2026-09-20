@@ -11,17 +11,24 @@ const REQUIRED_FILES = [
   'index.html',
   'styles/main.css',
   'scripts/main.js',
-  'scripts/canary.js',
+  'scripts/sentry.js',
   'api/health.js',
+  'api/sentry-config.js',
   'api/canary/api/v1/errors.js',
   'server.js',
   'src/worker.mjs',
   'Dockerfile',
-  'tools/verify-canary.js',
+  'tools/verify-retirement.js',
+  'tools/verify-browser.js',
   'tools/verify-server.js',
   'tools/verify-worker.mjs',
-  'tools/smoke-canary-production.js',
   'favicon.ico',
+];
+
+const RETIRED_CANARY_FILES = [
+  'scripts/canary.js',
+  'tools/smoke-canary-production.js',
+  'tools/verify-canary.js',
 ];
 
 const FORBIDDEN_DEPENDENCY_FILES = [
@@ -125,6 +132,51 @@ function assertProviderRetirement() {
   }
 }
 
+function assertCanaryRetired() {
+  RETIRED_CANARY_FILES.forEach((relativePath) => {
+    if (fs.existsSync(rootPath(relativePath))) {
+      throw new Error(`retired canary file must not return: ${relativePath}`);
+    }
+  });
+
+  const forbidden = [
+    /canary\.mistystep\.io/i,
+    /CANARY_API_KEY/,
+    /CANARY_ENDPOINT/,
+    /CANARY_SERVICE_NAME/,
+    /CANARY_ENVIRONMENT/,
+    /CANARY_READ/,
+    /forwardToCanary/,
+  ];
+  for (const relativePath of [
+    'index.html',
+    'scripts/sentry.js',
+    'api/health.js',
+    'api/sentry-config.js',
+    'api/canary/api/v1/errors.js',
+    'server.js',
+    'src/worker.mjs',
+    'wrangler.jsonc',
+    'README.md',
+    'CLAUDE.md',
+  ]) {
+    const source = readText(relativePath);
+    for (const pattern of forbidden) {
+      if (pattern.test(source)) {
+        throw new Error(`retired canary wiring remains in ${relativePath}: ${pattern}`);
+      }
+    }
+  }
+
+  const tombstone = readText('api/canary/api/v1/errors.js');
+  if (/fetch\s*\(/.test(tombstone)) {
+    throw new Error('the canary tombstone must not forward');
+  }
+  if (/JSON\.parse|readBody|MAX_BODY_BYTES/.test(tombstone)) {
+    throw new Error('the canary tombstone must not parse or buffer bodies');
+  }
+}
+
 function assertWorkerSourceIsNotAnAsset() {
   const ignored = readText('.assetsignore')
     .split(/\r?\n/)
@@ -210,10 +262,16 @@ function main() {
   step('required static files exist', () => REQUIRED_FILES.forEach(requireFile));
   step('zero-dependency static-site contract is intact', assertNoDependencyBuildStep);
   step('retired provider cannot be recreated', assertProviderRetirement);
+  step('retired canary wiring cannot return', assertCanaryRetired);
   step('index.html local references resolve', assertHtmlReferences);
   step('CSS local references resolve', assertCssReferences);
   step('JavaScript parses', assertJavaScriptSyntax);
-  step('Canary routes preserve behavior', () => runNodeScript('tools/verify-canary.js'));
+  step('liveness and retirement contracts hold', () =>
+    runNodeScript('tools/verify-retirement.js')
+  );
+  step('browser bootstrap honors injectable config', () =>
+    runNodeScript('tools/verify-browser.js')
+  );
   step('DigitalOcean server adapter preserves behavior', () =>
     runNodeScript('tools/verify-server.js')
   );
