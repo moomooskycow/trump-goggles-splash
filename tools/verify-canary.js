@@ -161,6 +161,27 @@ async function verifyRelayRoute() {
     assert.equal(response.statusCode, attempt <= 30 ? 202 : 429);
   }
 
+  // cf-connecting-ip is authoritative at the Cloudflare edge: a client that
+  // rotates x-forwarded-for must not reset the relay rate-limit bucket.
+  for (let attempt = 1; attempt <= 31; attempt += 1) {
+    response = makeResponse();
+    await relay(
+      {
+        method: 'POST',
+        headers: {
+          host: 'trumpgoggles.mistystep.io',
+          origin: 'https://trumpgoggles.mistystep.io',
+          'content-length': '26',
+          'cf-connecting-ip': '203.0.113.7',
+          'x-forwarded-for': `203.0.113.${attempt}`,
+        },
+        body: { message: 'spoof resistance' },
+      },
+      response
+    );
+    assert.equal(response.statusCode, attempt <= 30 ? 202 : 429);
+  }
+
   response = makeResponse();
   await relay(
     {

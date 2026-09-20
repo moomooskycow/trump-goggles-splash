@@ -1,7 +1,11 @@
 const DEFAULT_SERVICE = 'trump-goggles-splash';
 const DEFAULT_ENDPOINT = 'https://canary.mistystep.io';
 const DEFAULT_SITE_URL = 'https://www.trumpgoggles.com';
-const DEFAULT_SITE_ALIASES = ['https://trumpgoggles.com'];
+const DEFAULT_SITE_ALIASES = [
+  'https://trumpgoggles.com',
+  // Current Worker custom domain; it serves the same handlers on Cloudflare.
+  'https://trumpgoggles.mistystep.io',
+];
 const MAX_BODY_BYTES = 32768;
 const LOCAL_RELAY_LIMIT = 30;
 const LOCAL_RELAY_WINDOW_MS = 60000;
@@ -195,9 +199,13 @@ function lastForwardedAddress(value) {
 
 function clientKey(req) {
   return (
+    // cf-connecting-ip is set by the Cloudflare edge and cannot be spoofed
+    // by the client; prefer it so client-supplied x-forwarded-for cannot
+    // rotate the relay rate-limit bucket. The remaining headers are sidecar
+    // fallbacks (DigitalOcean App Platform and direct connections).
+    req.headers['cf-connecting-ip'] ||
     req.headers['do-connecting-ip'] ||
     lastForwardedAddress(req.headers['x-forwarded-for']) ||
-    req.headers['cf-connecting-ip'] ||
     req.headers['x-real-ip'] ||
     'unknown'
   );
@@ -375,3 +383,7 @@ module.exports = async function handler(req, res) {
 
   res.status(202).json({ status: 'accepted' });
 };
+
+// The Workers entrypoint (src/worker.mjs) reuses this handler and its body
+// cap; export the constant so the two runtimes cannot drift.
+module.exports.MAX_BODY_BYTES = MAX_BODY_BYTES;
