@@ -13,15 +13,16 @@ Static splash page for the Trump Goggles browser extension.
 ```
 ├── index.html      # All sections
 ├── styles/main.css # Theme + animations
-├── scripts/canary.js # Browser error observer
+├── scripts/sentry.js # Browser Sentry bootstrap (config-injected, no-op when disabled)
 ├── scripts/main.js # Scroll observer
-├── api/health.js # Shared health endpoint (sidecar + Worker)
-├── api/canary/api/v1/errors.js # Browser error relay to Canary
+├── api/health.js # Liveness endpoint (sidecar + Worker)
+├── api/sentry-config.js # Injectable browser-monitoring config
+├── api/canary/api/v1/errors.js # 410 tombstone for the retired relay
 ├── src/worker.mjs # Cloudflare Worker entry (assets + api routes)
 ├── tools/ci.js # Local CI gate used by GitHub Actions
-├── tools/verify-canary.js # Canary route verification
+├── tools/verify-retirement.js # Liveness + tombstone + config contract checks
+├── tools/verify-browser.js # vm-sandbox check of scripts/sentry.js
 ├── tools/verify-worker.mjs # Worker route verification
-├── tools/smoke-canary-production.js # Production Canary smoke/readback
 └── favicon.ico
 ```
 
@@ -34,8 +35,9 @@ open index.html
 # Or any static server
 python3 -m http.server 3000
 
-# Verify Canary health and relay behavior
-node tools/verify-canary.js
+# Contract checks
+node tools/verify-retirement.js
+node tools/verify-browser.js
 
 # Verify Worker routing locally
 node tools/verify-worker.mjs
@@ -45,9 +47,6 @@ node tools/ci.js
 
 # Run the Worker locally (assets + api routes)
 wrangler dev --env staging
-
-# Verify deployed Canary ingest and readback
-CANARY_READ_API_KEY=... node tools/smoke-canary-production.js
 ```
 
 ## URLs
@@ -56,4 +55,12 @@ CANARY_READ_API_KEY=... node tools/smoke-canary-production.js
 - GitHub: https://github.com/phrazzld/trump-goggles
 - Production: https://www.trumpgoggles.com
 - Staging: https://trump-goggles-splash-staging.misty-step.workers.dev
-- Canary: `/api/health` and `/api/canary/api/v1/errors` are served by the Cloudflare Worker (`src/worker.mjs`) and the DigitalOcean sidecar (`server.js`); keep `CANARY_API_KEY` server-only.
+
+## Observability notes
+
+- `GET /api/health` is liveness only; it never proves error delivery.
+- The retired legacy relay answers 410 for every method and never reads or
+  forwards request bodies. Kept until a separate removal decision.
+- Browser error collection runs through the official Sentry browser SDK and
+  is enabled by a deploy-provided `SENTRY_DSN` (see README). Never commit a
+  DSN and never invent one.

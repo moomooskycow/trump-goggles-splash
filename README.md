@@ -21,8 +21,11 @@ open index.html
 python3 -m http.server 3000
 npx serve .
 
-# Verify Canary health and relay behavior
-node tools/verify-canary.js
+# Liveness, retirement, and config contracts
+node tools/verify-retirement.js
+
+# Browser bootstrap (vm sandbox; proves disabled is a no-op)
+node tools/verify-browser.js
 
 # Verify Worker routing locally
 node tools/verify-worker.mjs
@@ -31,10 +34,10 @@ node tools/verify-worker.mjs
 node tools/ci.js
 
 # Run the Worker locally (assets + api routes; needs wrangler 4.135+)
+# Tip: if dev reload-loops, add `--persist-to /tmp/wrangler-state`; the
+# local state churn under .wrangler/ can trip the file watcher when the
+# assets directory is the repo root.
 wrangler dev --env staging
-
-# After production deploy, verify Canary ingest and readback
-CANARY_READ_API_KEY=... node tools/smoke-canary-production.js
 ```
 
 ## Structure
@@ -44,18 +47,20 @@ CANARY_READ_API_KEY=... node tools/smoke-canary-production.js
 ├── styles/
 │   └── main.css    # All styles
 ├── scripts/
-│   ├── canary.js   # Browser error observer
+│   ├── sentry.js   # Browser Sentry bootstrap (config-injected)
 │   └── main.js     # Scroll animations (~40 lines)
 ├── api/
 │   ├── health.js
+│   ├── sentry-config.js
 │   └── canary/api/v1/errors.js
 ├── src/
 │   └── worker.mjs  # Cloudflare Worker entry
 ├── tools/
 │   ├── ci.js
-│   ├── verify-canary.js
-│   ├── verify-worker.mjs
-│   └── smoke-canary-production.js
+│   ├── verify-retirement.js
+│   ├── verify-browser.js
+│   ├── verify-server.js
+│   └── verify-worker.mjs
 ├── favicon.ico
 └── README.md
 ```
@@ -67,30 +72,31 @@ The Cloudflare Worker `trump-goggles-splash` is attached and ready
 serves from it. `trumpgoggles.com` and `www.trumpgoggles.com` attach at the
 registrar nameserver flip; until that flip completes, `www.trumpgoggles.com`
 still reaches the DigitalOcean Caddy origin. Static assets come from the
-assets layer; `src/worker.mjs` serves the same two routes as the
+assets layer; `src/worker.mjs` serves the same routes as the
 dependency-free Node sidecar in `server.js`, so the contract holds on both
 runtimes:
 
-- `GET|HEAD /api/health`
-- `POST /api/canary/api/v1/errors`
+- `GET|HEAD /api/health` — site liveness only. HTTP 200 is never proof of
+  error delivery.
+- `GET|HEAD /api/sentry-config` — browser-monitoring config, injectable at
+  deploy time.
+- `any method /api/canary/api/v1/errors` — HTTP 410 tombstone. The old
+  Canary relay is retired; the route never reads, stores, or forwards a
+  request body.
 
-The handlers in `api/` are provider-neutral and shared by both runtimes.
+Browser error collection is intentionally unavailable until a Sentry DSN is
+provided at deploy time. The page loads the official `@sentry/browser`
+bundle (pinned version) only when the config endpoint reports
+`enabled: true`; errors then travel from the SDK straight to Sentry ingest.
+The app owns no relay and stores nothing.
 
 Both runtimes read the same environment names:
 
-- `CANARY_API_KEY` - service-bound ingest key for `trump-goggles-splash`
-- `CANARY_ENDPOINT` - defaults to `https://canary.mistystep.io`
-- `CANARY_SERVICE_NAME` - defaults to `trump-goggles-splash`
-- `CANARY_ENVIRONMENT` - `staging` or `production` (set via wrangler.jsonc)
-- `NEXT_PUBLIC_SITE_URL` - canonical origin, `https://www.trumpgoggles.com`
-
-`/api/health` is a liveness/config check and returns `503` in production if
-Canary is not configured. Use `tools/smoke-canary-production.js` after deploy
-to prove end-to-end Canary ingest.
-
-Note: the Canary service is currently retired (no public endpoint as of
-2026-09-20); until it is revived or replaced, `/api/health` reports `503` in
-production and the smoke test cannot complete.
+- `SENTRY_DSN` — public client-side DSN for the site's Sentry project.
+  Unset means monitoring is off; no DSN is committed to this repository.
+- `SENTRY_ENVIRONMENT` — `staging` or `production`
+- `SENTRY_RELEASE` — optional release identifier
+- `NODE_ENV` — fallback environment name
 
 ## Links
 

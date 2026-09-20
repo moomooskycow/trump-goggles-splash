@@ -1,17 +1,15 @@
 const DEFAULT_SERVICE = 'trump-goggles-splash';
 
-function canaryStatus() {
-  return {
-    status: process.env.CANARY_API_KEY ? 'configured' : 'not_configured',
-    service: process.env.CANARY_SERVICE_NAME || DEFAULT_SERVICE,
-    endpoint: process.env.CANARY_ENDPOINT || 'https://canary.mistystep.io',
-  };
-}
-
-function requiresCanaryConfig() {
-  return process.env.NODE_ENV === 'production';
-}
-
+/**
+ * Liveness check for the splash.
+ *
+ * Truthful and telemetry-independent: `status` reports site liveness only,
+ * never error-delivery health. The retired Canary slot stays named so old
+ * consumers can read a definitive state instead of a missing field.
+ * Browser error monitoring now runs through Sentry (see
+ * api/sentry-config.js and scripts/sentry.js) and is deliberately not
+ * reported here as a readiness requirement.
+ */
 module.exports = function handler(req, res) {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.setHeader('Allow', 'GET, HEAD');
@@ -19,31 +17,22 @@ module.exports = function handler(req, res) {
     return;
   }
 
-  const canary = canaryStatus();
-  const configured = canary.status === 'configured';
-  const healthy = configured || !requiresCanaryConfig();
   const body = {
-    status: healthy ? 'ok' : 'error',
+    status: 'ok',
     timestamp: new Date().toISOString(),
-    service: canary.service,
+    service: DEFAULT_SERVICE,
     checks: {
       liveness: 'ok',
-      canary_config: configured ? 'configured' : 'not_configured',
-    },
-    dependencies: {
-      canary: configured ? 'configured' : 'not_configured',
     },
     observability: {
-      canary,
+      canary: {
+        status: 'retired',
+      },
     },
   };
 
-  if (!healthy) {
-    body.error = 'Canary is not configured';
-  }
-
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.status(healthy ? 200 : 503);
+  res.status(200);
 
   if (req.method === 'HEAD') {
     res.end();

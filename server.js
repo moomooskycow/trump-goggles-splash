@@ -3,11 +3,15 @@
 
 const http = require('node:http');
 const health = require('./api/health');
-const relay = require('./api/canary/api/v1/errors');
+const sentryConfig = require('./api/sentry-config');
+const canaryTombstone = require('./api/canary/api/v1/errors');
+
+const SERVICE = 'trump-goggles-splash';
 
 const routes = new Map([
   ['/api/health', health],
-  ['/api/canary/api/v1/errors', relay],
+  ['/api/sentry-config', sentryConfig],
+  ['/api/canary/api/v1/errors', canaryTombstone],
 ]);
 
 function adaptResponse(response) {
@@ -40,7 +44,7 @@ const server = http.createServer(async (request, response) => {
     console.error(
       JSON.stringify({
         level: 'error',
-        service: process.env.CANARY_SERVICE_NAME || 'trump-goggles-splash',
+        service: SERVICE,
         operation: 'request',
         error: error instanceof Error ? error.message : 'unknown error',
       })
@@ -58,9 +62,7 @@ const server = http.createServer(async (request, response) => {
 
 const port = Number(process.env.PORT || 8080);
 server.listen(port, '0.0.0.0', () => {
-  console.log(
-    JSON.stringify({ level: 'info', service: 'trump-goggles-splash', port })
-  );
+  console.log(JSON.stringify({ level: 'info', service: SERVICE, port }));
 });
 
 function shutdown() {
