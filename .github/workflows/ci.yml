@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   gate:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hetzner-ci, trump-goggles-splash-ci]
     steps:
       - uses: actions/checkout@v4
 
